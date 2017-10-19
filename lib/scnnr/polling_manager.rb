@@ -2,29 +2,62 @@
 
 module Scnnr
   class PollingManager
-    MAX_TIMEOUT = 25
+    attr_reader :remaining_timeout, :max_timeout, :stop_condition, :last_result
 
-    attr_accessor :timeout
+    def initialize(timeout, max_timeout:)
+      @max_timeout = max_timeout
 
-    def initialize(timeout)
       case timeout
-      when Integer, Float::INFINITY then @timeout = timeout
+      when Integer, Float::INFINITY then @remaining_timeout = timeout
       else
         raise ArgumentError, "timeout must be Integer or Float::INFINITY, but given: #{timeout}"
       end
     end
 
-    def remain_timeout?
-      self.timeout.positive?
+    def stop_when(&condition)
+      @stop_condition = condition
+      self
     end
 
-    def polling(client, recognition_id, options = {})
-      loop do
-        timeout = [self.timeout, MAX_TIMEOUT].min
-        self.timeout -= timeout
-        recognition = client.fetch(recognition_id, options.merge(timeout: timeout, polling: false))
-        break recognition if recognition.finished? || !self.remain_timeout?
-      end
+    def once(&block)
+      poll(&block) if continue_polling?
+      self
+    end
+
+    def repeat(&block)
+      poll(&block) while continue_polling?
+      self
+    end
+
+    def started?
+      !last_result.nil?
+    end
+
+    def successful?
+      started? && (!stop_condition || stop_condition.call(last_result))
+    end
+
+    def timed_out?
+      remaining_timeout <= 0
+    end
+
+    private
+
+    def continue_polling?
+      # We always want to do at least one iteration
+      return true unless started?
+
+      !timed_out? && !successful?
+    end
+
+    def poll
+      current_timeout = [remaining_timeout, max_timeout].min
+      @remaining_timeout -= current_timeout
+      @last_result = yield current_timeout, last_result
+
+      #TODO: Yucky way to ensure started? is true
+      # Technically this isn't needed right now because we return a non-nil recognition, but it's a potential trap ...
+      @last_result ||= false
     end
   end
 end

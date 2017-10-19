@@ -6,6 +6,7 @@ module Scnnr
     require 'json'
 
     ENDPOINT_BASE = 'https://api.scnnr.cubki.jp'
+    API_MAX_TIMEOUT = 25
 
     def initialize
       yield(self.config) if block_given?
@@ -16,29 +17,29 @@ module Scnnr
     end
 
     def recognize_image(image, options = {})
-      request_create('recognitions', options) { |connection| connection.send_stream(image) }
+      options = merge_options(options)
+      poll_while_queued(options).
+        once { |timeout| request_image_recognition(image, options.merge(timeout: timeout)) }.
+        repeat { |timeout, recognition| fetch_recognition(recognition.id, options.merge(timeout: timeout)) }
     end
 
     def recognize_url(url, options = {})
-      request_create('remote/recognitions', options) { |connection| connection.send_json({ url: url }) }
+      options = merge_options(options)
+      poll_while_queued(options).
+        once { |timeout| request_url_recognition(url, options.merge(timeout: timeout)) }.
+        repeat { |timeout, recognition| fetch_recognition(recognition.id, options.merge(timeout: timeout)) }
     end
 
     def fetch(recognition_id, options = {})
-      return request(recognition_id, options) if options.delete(:polling) == false
       options = merge_options(options)
-      PollingManager.new(options.delete(:timeout)).polling(self, recognition_id, options)
+      poll_while_queued(options).
+        repeat { |timeout| fetch_recognition(recognition_id, options.merge(timeout: timeout)) }
     end
 
     private
 
     def merge_options(options = {})
       self.config.to_h.merge(options)
-    end
-
-    def restrict_timeout(options)
-      extra_timeout = options[:timeout] - PollingManager::MAX_TIMEOUT
-      options = options.merge(timeout: [options[:timeout], PollingManager::MAX_TIMEOUT].min)
-      [options, extra_timeout]
     end
 
     def construct_uri(path, options = {})
@@ -54,21 +55,24 @@ module Scnnr
       Connection.new(uri, :post, options[:api_key], options[:logger])
     end
 
-    def request_create(path, options)
-      options, fetch_timeout = restrict_timeout(merge_options(options))
-      uri = construct_uri(path, options)
-
-      response = yield post_connection(uri, options)
-      recognition = handle_response(response, options)
-
-      if recognition.queued? && fetch_timeout.positive?
-        fetch(recognition.id, options.merge(timeout: fetch_timeout, polling: true))
-      else
-        recognition
-      end
+    def poll_while_queued(options)
+      PollingManager.new(options[:timeout], max_timeout: API_MAX_TIMEOUT).
+        stop_when { |recognition| !recognition.queued? }
     end
 
-    def request(recognition_id, options = {})
+    def request_image_recognition(image, options)
+      uri = construct_uri('recognitions', options)
+      response = post_connection(uri, options).send_stream(image)
+      handle_response(response, options)
+    end
+
+    def request_url_recognition(url, options)
+      uri = construct_uri('remote/recognitions', options)
+      response = post_connection(uri, options).send_json({ url: url })
+      handle_response(response, options)
+    end
+
+    def fetch_recognition(recognition_id, options = {})
       options = merge_options(options)
       uri = construct_uri("recognitions/#{recognition_id}", options)
       response = get_connection(uri, options).send_request
