@@ -35,7 +35,6 @@ module Scnnr
     private
 
     def handle_recognition(recognition)
-      raise TimeoutError.new('recognition timed out', recognition) if recognition.queued? && async?
       return recognition unless recognition.error?
 
       case recognition.error['type']

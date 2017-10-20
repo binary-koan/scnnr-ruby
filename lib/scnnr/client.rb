@@ -25,8 +25,11 @@ module Scnnr
 
     def fetch(recognition_id, options = {})
       return request(recognition_id, options) if options.delete(:polling) == false
+
       options = merge_options(options)
-      PollingManager.new(options.delete(:timeout)).polling(self, recognition_id, options)
+      timeout = options.delete(:timeout)
+      recognition = PollingManager.new(timeout).polling(self, recognition_id, options)
+      check_timed_out(recognition, timeout)
     end
 
     private
@@ -64,7 +67,7 @@ module Scnnr
       if recognition.queued? && fetch_timeout.positive?
         fetch(recognition.id, options.merge(timeout: fetch_timeout, polling: true))
       else
-        recognition
+        check_timed_out(recognition, options[:timeout])
       end
     end
 
@@ -77,7 +80,15 @@ module Scnnr
 
     def handle_response(response, options = {})
       response = Response.new(response, options[:timeout].positive?)
-      response.build_recognition
+      recognition = response.build_recognition
+    end
+
+    def check_timed_out(recognition, timeout)
+      if recognition.queued? && timeout.positive?
+        raise TimeoutError.new('recognition timed out', recognition)
+      else
+        recognition
+      end
     end
   end
 end
