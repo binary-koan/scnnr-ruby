@@ -1,13 +1,12 @@
-# frozen_string_literal: true
-
 module Scnnr
-  Configuration = Struct.new(:api_key, :api_version, :timeout, :logger) do
-    require 'logger'
+  class Configuration
+    attr_reader :api_key, :api_version, :timer, :logger
 
-    DEFAULT_LOGGER = Logger.new(STDOUT, level: :info)
-
-    def initialize
-      super(nil, 'v1', 0, DEFAULT_LOGGER)
+    def initialize(api_key:, api_version:, timeout:, max_timeout:, logger: nil)
+      @api_key = api_key
+      @api_version = api_version
+      @timer = Timer.new(timeout: timeout, per_iteration_timeout: max_timeout)
+      @logger = logger || Logger.new(STDOUT, level: :info)
     end
   end
 end
